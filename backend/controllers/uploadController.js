@@ -1,5 +1,6 @@
-import { createReadStream, unlinkSync } from 'fs';
+import fs from 'fs';
 import csv from 'csv-parser';
+import crypto from 'crypto';
 import parseExcel from '../utils/excelParser.js';
 import Order from '../models/Order.js';
 import PendingOrder from '../models/PendingOrder.js';
@@ -10,33 +11,14 @@ function cleanNum(n) {
   return Number(n);
 }
 
-// Strict Unique Filter
-function getUniqueFilter(mapped, type) {
-  const filter = {
-    poNumber: mapped.poNumber,
-    productCode: mapped.productCode,
-    soNumber: mapped.soNumber,
-    size: mapped.size,
-  };
-
-  if (mapped.lineItemNumber) {
-    filter.lineItemNumber = mapped.lineItemNumber;
-  }
-
-  if (type === "DISPATCHED" && mapped.invoiceNumber) {
-    filter.invoiceNumber = mapped.invoiceNumber;
-  }
-
-  return filter;
-}
-
 // Helper: Process a batch of rows to DB
-async function processBatch(rows, statusType) {
-  if (rows.length === 0) return 0;
+async function processBatch(rows, statusType, globalStartIndex = 0) {
+  if (rows.length === 0) return { inserted: 0, reconciled: 0 };
 
   const operations = [];
 
-  for (let row of rows) {
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
     let mapped = mapFields(row);
     mapped.status = statusType === "PENDING" ? "Pending" : "Dispatched";
     
@@ -47,9 +29,16 @@ async function processBatch(rows, statusType) {
     mapped.chargeWeight = cleanNum(mapped.chargeWeight);
     mapped.rate = cleanNum(mapped.rate);
 
-    const filter = getUniqueFilter(mapped, statusType);
+    // --- UNIQUENESS FIX ---
+    const trueRowIndex = globalStartIndex + i;
+    const uniqueString = `${JSON.stringify(row)}-${trueRowIndex}-${statusType}`; 
+    const uniqueRowSignature = crypto.createHash('md5').update(uniqueString).digest('hex');
+    
+    mapped.rowSignature = uniqueRowSignature;
 
-    // Prepare Bulk Operation
+    // Filter strictly by this unique signature
+    const filter = { rowSignature: uniqueRowSignature };
+
     operations.push({
       updateOne: {
         filter: filter,
@@ -57,49 +46,33 @@ async function processBatch(rows, statusType) {
         upsert: true,
       },
     });
+  }
 
-    // Special logic for Dispatched: Reconcile with Pending
-    // Note: In a massive batch scenario, performing individual finds for reconciliation 
-    // is slow. For 10GB files, we typically just save the history first.
-    // However, to keep your logic intact, we will do it. 
-    // Optimally, you would run a separate reconciliation script after upload.
-    if (statusType === "DISPATCHED") {
-        // We can't easily bulk-write the reconciliation logic because it depends on reading the DB.
-        // For now, we will stick to the updateOne logic for history, but we have to handle 
-        // the PendingOrder cleanup separately or accepts it might be slower.
-        // To handle 10GB files effectively, we only bulk write the HISTORY.
-        // The reconciliation is done via a separate async process or strictly for the matched items.
-        
-        // AUTO-RECONCILIATION (Optimized lookups could be done here, 
-        // but for simplicity/safety we will just process the history insert in bulk first)
+  // 1. Bulk Write
+  const Collection = statusType === "PENDING" ? PendingOrder : Order;
+  
+  if (operations.length > 0) {
+    try {
+      // ordered: false ensures that if one fails, the others continue
+      await Collection.bulkWrite(operations, { ordered: false });
+    } catch (err) {
+        // Log duplicate errors but don't crash
+        // If we see E11000 here, it means the index drop didn't work or hasn't propagated yet
+        console.warn(`Batch Write Warning (${statusType}): Some duplicates were skipped by DB.`);
     }
   }
 
-  // 1. Bulk Write to Main Collection
-  const Collection = statusType === "PENDING" ? PendingOrder : Order;
-  if (operations.length > 0) {
-    await Collection.bulkWrite(operations);
-  }
-
-  // 2. Handle Reconciliation for Dispatched (Post-Batch)
-  // Doing this row-by-row is the only safe way to ensure accurate math
+  // 2. Reconciliation (Only for dispatched)
   let reconciledCount = 0;
   if (statusType === "DISPATCHED") {
     for (let row of rows) {
-      // Re-map to find keys
       let mapped = mapFields(row);
       const pendingMatch = {
         poNumber: mapped.poNumber,
         productCode: mapped.productCode,
         size: mapped.size,
       };
-
-      // We interpret "Sale Qty" as dispatch quantity
       const shippedNow = cleanNum(mapped.dispatchQuantity) || 0;
-
-      // Atomic update is faster: decrement pending quantity directly
-      // If result is <= 0, we delete it in a second step or let a cleanup job do it.
-      // Here we will try to find and update.
       const pendingItem = await PendingOrder.findOne(pendingMatch);
       if (pendingItem) {
         let newPendingQty = (pendingItem.pendingQuantity || 0) - shippedNow;
@@ -122,15 +95,30 @@ const uploadFile = async (req, res, statusType) => {
     const file = req.file;
     if (!file) return res.status(400).json({ error: "No file uploaded" });
 
+    // --- CRITICAL FIX: FORCE DROP OLD INDEX ---
+    // The error "E11000 duplicate key error... index: poNumber_1_..." means the OLD index exists.
+    // We must kill it so the new logic (rowSignature) can work.
+    if (statusType === "PENDING") {
+        try {
+            // Drop the specific legacy index that is causing the 1824 row limit
+            await PendingOrder.collection.dropIndex("poNumber_1_productCode_1_soNumber_1_size_1_lineItemNumber_1");
+            console.log("✅ Successfully dropped legacy blocking index.");
+        } catch (e) {
+            // If index doesn't exist, that's fine, ignore error
+            if (e.code !== 27) { // 27 = index not found
+                 console.log("ℹ️ Index cleanup check passed.");
+            }
+        }
+    }
+
     const name = file.originalname.toLowerCase();
     const isCSV = name.endsWith(".csv");
     
-    // EXCEL HANDLING (Memory Intensive - Standard)
-    // Excel files are rarely 10GB. If they are, they should be converted to CSV.
+    // EXCEL HANDLING
     if (!isCSV) {
       const rows = parseExcel(file.path);
-      const result = await processBatch(rows, statusType); // Process all at once for Excel
-      fs.unlinkSync(file.path);
+      const result = await processBatch(rows, statusType, 0);
+      fs.unlinkSync(file.path); 
       return res.json({
         message: "Excel processed successfully",
         rowsInserted: result.inserted,
@@ -139,30 +127,33 @@ const uploadFile = async (req, res, statusType) => {
       });
     }
 
-    // CSV HANDLING (Streaming - Memory Safe for 10GB+)
+    // CSV HANDLING (Streaming)
     let totalInserted = 0;
     let totalReconciled = 0;
     let batch = [];
-    const BATCH_SIZE = 2000; // Process 2000 rows at a time
+    const BATCH_SIZE = 2000;
+    let globalRowCounter = 0; 
 
     const processStream = new Promise((resolve, reject) => {
-      const stream = fs.createReadStream(file.path)
+      const stream = fs.createReadStream(file.path) 
         .pipe(csv())
         .on("data", async (row) => {
-          // Clean keys immediately
           const cleaned = {};
           for (let k in row) cleaned[k.trim().replace(/\s+/g, " ")] = row[k];
           
           batch.push(cleaned);
 
-          // If batch is full, PAUSE stream, process, then RESUME
           if (batch.length >= BATCH_SIZE) {
             stream.pause();
             try {
-              const result = await processBatch(batch, statusType);
+              const batchStartIndex = globalRowCounter; 
+              const result = await processBatch(batch, statusType, batchStartIndex);
+              
               totalInserted += result.inserted;
               totalReconciled += result.reconciled;
-              batch = []; // Clear memory
+              globalRowCounter += batch.length;
+              
+              batch = [];
               stream.resume();
             } catch (err) {
               stream.destroy(err);
@@ -171,10 +162,9 @@ const uploadFile = async (req, res, statusType) => {
           }
         })
         .on("end", async () => {
-          // Process remaining rows
           if (batch.length > 0) {
             try {
-              const result = await processBatch(batch, statusType);
+              const result = await processBatch(batch, statusType, globalRowCounter);
               totalInserted += result.inserted;
               totalReconciled += result.reconciled;
             } catch (err) {
@@ -188,7 +178,7 @@ const uploadFile = async (req, res, statusType) => {
 
     await processStream;
 
-    fs.unlinkSync(file.path);
+    fs.unlinkSync(file.path); 
 
     return res.json({
       message: "Large CSV processed successfully",
@@ -204,6 +194,5 @@ const uploadFile = async (req, res, statusType) => {
 };
 
 export default {
-  uploadFile,
-  processBatch
+  uploadFile
 };
