@@ -1,11 +1,17 @@
-import express from 'express';
-import orderController from '../controllers/orderController.js';
+import express from "express";
+// FIX: Use named imports because the controller uses named exports
+import { 
+  searchOrders, 
+  getAllOrders, 
+  getPendingOrders, 
+  getDashboardStats 
+} from "../controllers/orderController.js";
 
 const router = express.Router();
 
-router.get('/search', orderController.searchOrders);
-router.get('/all', orderController.getAllOrders);
-router.get('/pending', orderController.getPendingOrders);
-router.get('/stats', orderController.getDashboardStats); // New Analytics Route
+router.get("/search", searchOrders);
+router.get("/all", getAllOrders);
+router.get("/pending", getPendingOrders);
+router.get("/stats", getDashboardStats);
 
 export default router;

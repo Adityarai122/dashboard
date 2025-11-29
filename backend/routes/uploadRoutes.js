@@ -1,18 +1,21 @@
-import express from 'express';
-import multer from 'multer';
-import uploadController from '../controllers/uploadController.js';
+import express from "express";
+import multer from "multer";
+// FIX: Use named import { uploadFile } instead of default import
+import { uploadFile } from "../controllers/uploadController.js";
 
 const router = express.Router();
-const upload = multer({ dest: 'uploads/' });
+// Allow up to 5 files at once
+const upload = multer({ dest: "uploads/" });
 
-// Upload for Pending Orders (Updates PendingOrder Collection)
-router.post('/pending', upload.single('file'), (req, res) =>
-  uploadController.uploadFile(req, res, 'PENDING')
+// Upload for Pending Orders
+// Uses upload.array('file', 5) to accept multiple files
+router.post("/pending", upload.array("file", 5), (req, res) =>
+  uploadFile(req, res, "PENDING")
 );
 
-// Upload for Dispatched Orders (Updates Order Collection & Cleans PendingOrder)
-router.post('/dispatched', upload.single('file'), (req, res) =>
-  uploadController.uploadFile(req, res, 'DISPATCHED')
+// Upload for Dispatched Orders
+router.post("/dispatched", upload.array("file", 5), (req, res) =>
+  uploadFile(req, res, "DISPATCHED")
 );
 
 export default router;

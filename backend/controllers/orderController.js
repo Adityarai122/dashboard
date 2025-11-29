@@ -1,7 +1,8 @@
-import Order from '../models/Order.js';
-import PendingOrder from '../models/PendingOrder.js';
+import Order from "../models/Order.js";
+import PendingOrder from "../models/PendingOrder.js";
+import DispatchSummary from "../models/DispatchSummary.js"; // Import New Model
 
-// Helper to build queries
+// ... (keep buildQuery helper) ...
 const buildQuery = (q, filters) => {
   let query = {};
   
@@ -29,12 +30,10 @@ const buildQuery = (q, filters) => {
   return query;
 };
 
-// --- API ENDPOINTS ---
-
 // 1. UPDATED: Dashboard Analytics
-async function getDashboardStats(req, res) {
+export const getDashboardStats = async (req, res) => {
   try {
-    const { range } = req.query; // Get range from frontend (1D, 1W, 1M, 6M, 1Y)
+    const { range } = req.query; 
 
     // A. Pending Stats
     const pendingStats = await PendingOrder.aggregate([
@@ -48,7 +47,7 @@ async function getDashboardStats(req, res) {
       }
     ]);
 
-    // B. Dispatched Stats (Lifetime)
+    // B. Dispatched Stats
     const dispatchedStats = await Order.aggregate([
       {
         $group: {
@@ -60,9 +59,7 @@ async function getDashboardStats(req, res) {
       }
     ]);
 
-    // C. UPDATED: Today's Activity (Fix for "0" value)
-    // We now check BOTH 'createdAt' and 'updatedAt'. 
-    // This ensures we catch new uploads (createdAt) AND modified records (updatedAt).
+    // C. Today's Activity
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
 
@@ -70,8 +67,8 @@ async function getDashboardStats(req, res) {
       { 
         $match: { 
           $or: [
-            { createdAt: { $gte: startOfDay } }, // Newly uploaded today
-            { updatedAt: { $gte: startOfDay } }  // Updated today
+            { createdAt: { $gte: startOfDay } }, 
+            { updatedAt: { $gte: startOfDay } }
           ]
         } 
       }, 
@@ -84,24 +81,37 @@ async function getDashboardStats(req, res) {
       }
     ]);
 
-    // D. Top 5 Customers by Pending Value
-    const topCustomers = await PendingOrder.aggregate([
+    // D. Top 5 Companies by DISPATCHED QUANTITY
+    const topDispatchedByQty = await Order.aggregate([
       {
         $group: {
           _id: "$customerName",
-          count: { $sum: 1 },
-          value: { $sum: { $multiply: ["$pendingQuantity", "$rate"] } }
+          totalQty: { $sum: "$dispatchQuantity" }
         }
       },
-      { $sort: { value: -1 } },
+      { $sort: { totalQty: -1 } },
       { $limit: 5 }
     ]);
 
-    // E. Active Customers
-    const activeCustomers = await PendingOrder.distinct("customerName");
+    // E. Top 5 Pending Companies by QUANTITY
+    const topPendingByQty = await PendingOrder.aggregate([
+      {
+        $group: {
+          _id: "$customerName",
+          totalQty: { $sum: "$pendingQuantity" }
+        }
+      },
+      { $sort: { totalQty: -1 } },
+      { $limit: 5 }
+    ]);
 
-    // F. Dynamic Dispatch Trend
-    let limit = 30; // Default 1 Month
+    // F. NEW: Recent Dispatch Upload Logs (The new feature you asked for)
+    const recentUploadLogs = await DispatchSummary.find()
+      .sort({ uploadDate: -1 })
+      .limit(5);
+
+    // G. Dynamic Dispatch Trend
+    let limit = 30;
     if (range === '1W') limit = 7;
     if (range === '6M') limit = 180;
     if (range === '1Y') limit = 365;
@@ -110,7 +120,7 @@ async function getDashboardStats(req, res) {
     const dailyTrend = await Order.aggregate([
         {
             $group: {
-                _id: "$dispatchDate", // Group by Day for the graph
+                _id: "$dispatchDate",
                 orders: { $sum: 1 },
                 value: { $sum: { $multiply: ["$dispatchQuantity", "$rate"] } }
             }
@@ -124,9 +134,13 @@ async function getDashboardStats(req, res) {
       pending: pendingStats[0] || { totalCount: 0, totalValue: 0, totalQuantity: 0 },
       dispatched: dispatchedStats[0] || { totalCount: 0, totalValue: 0, totalQuantity: 0 },
       today: todayDispatchStats[0] || { totalCount: 0, totalValue: 0 },
-      topCustomers: topCustomers.map(c => ({ name: c._id || "Unknown", value: c.value, count: c.count })),
+      topDispatchedByQty: topDispatchedByQty.map(c => ({ name: c._id || "Unknown", qty: c.totalQty })),
+      topPendingByQty: topPendingByQty.map(c => ({ name: c._id || "Unknown", qty: c.totalQty })),
+      
+      // Send the summary logs to frontend
+      recentUploadLogs: recentUploadLogs,
+
       trend: dailyTrend.map(t => ({ name: t._id || "N/A", orders: t.orders, value: t.value })),
-      activeCustomerCount: activeCustomers.length,
       rangeUsed: range || '1M'
     });
 
@@ -136,12 +150,12 @@ async function getDashboardStats(req, res) {
   }
 };
 
-// 2. Advanced Master Search
-async function searchOrders(req, res) {
+// ... (Keep existing searchOrders, getAllOrders, getPendingOrders exports unchanged) ...
+export const searchOrders = async (req, res) => {
   try {
     const { q, startDate, endDate, customer, poNumber } = req.query;
     const filters = { startDate, endDate, customer, poNumber };
-    const query = await buildQuery(q, filters);
+    const query = buildQuery(q, filters);
 
     const [pendingResults, historyResults] = await Promise.all([
       PendingOrder.find(query).limit(50),
@@ -157,8 +171,7 @@ async function searchOrders(req, res) {
   }
 };
 
-// 3. Get All History (Grouped)
-async function getAllOrders(req, res) {
+export const getAllOrders = async (req, res) => {
   try {
     const pipeline = [
       { $sort: { createdAt: -1 } },
@@ -179,8 +192,7 @@ async function getAllOrders(req, res) {
   }
 };
 
-// 4. Get Open/Pending Orders (Grouped)
-async function getPendingOrders(req, res) {
+export const getPendingOrders = async (req, res) => {
   try {
     const { customer, part, dueToday } = req.query;
     let matchStage = {};
@@ -213,13 +225,4 @@ async function getPendingOrders(req, res) {
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch pending orders" });
   }
-};
-
-// Export all controller functions as default
-export default {
-  getDashboardStats,
-  searchOrders,
-  getAllOrders,
-  getPendingOrders,
-  buildQuery // Exporting helper function if needed by other modules
 };
