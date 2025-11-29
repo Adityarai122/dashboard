@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import API from "../api/axiosClient";
+// FIX: Added 'FileText' to imports
 import { UploadCloud, FileSpreadsheet, CheckCircle, AlertCircle, Loader, Clock, CheckSquare, X, FileText } from "lucide-react";
 import "../App.css";
 
@@ -26,8 +27,8 @@ function UploadFile() {
   }, [msg]);
 
   const handleFileChange = (e) => {
-    // Convert FileList to Array and limit to 5
-    const selectedFiles = Array.from(e.target.files).slice(0, 5);
+    // Convert FileList to Array and limit to 10
+    const selectedFiles = Array.from(e.target.files).slice(0, 10);
     setFiles(selectedFiles);
     setMsg(null);
     setProgress(0);
@@ -252,7 +253,7 @@ function UploadFile() {
         }}></div>
         
         <h3 style={{ marginBottom: "30px", color: "#1f2937", fontSize: "1.5rem", fontWeight: "700" }}>
-          Upload {activeTab === "pending" ? "Pending Orders" : "Dispatch Reports"} (Max 5)
+          Upload {activeTab === "pending" ? "Pending Orders File" : "Dispatch Report File"}
         </h3>
 
         {/* File Input */}
@@ -383,53 +384,52 @@ function UploadFile() {
           {loading ? "Processing..." : `Upload ${files.length > 0 ? files.length : ""} File${files.length !== 1 ? "s" : ""} to ${activeTab === "pending" ? "Pending" : "History"}`}
         </button>
 
-      </div>
-
-      {/* --- TOAST NOTIFICATION (POPUP) --- */}
-      {msg && (
-        <div style={{ 
-          position: "fixed",
-          bottom: "30px",
-          left: "50%",
-          transform: "translateX(-50%)",
-          zIndex: 1000,
-          background: msg.type === "success" ? "#ffffff" : "#fef2f2",
-          borderLeft: `6px solid ${msg.type === "success" ? "#10b981" : "#ef4444"}`,
-          borderRadius: "12px",
-          padding: "16px 24px",
-          boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)",
-          display: "flex",
-          alignItems: "center",
-          gap: "15px",
-          minWidth: "350px",
-          maxWidth: "90%",
-          animation: "slideUp 0.3s cubic-bezier(0.4, 0, 0.2, 1)"
-        }}>
+        {/* Feedback Message */}
+        {msg && (
           <div style={{ 
-            background: msg.type === "success" ? "#ecfdf5" : "#fee2e2", 
-            padding: "8px", 
-            borderRadius: "50%",
-            display: "flex", alignItems: "center", justifyContent: "center"
+            position: "fixed",
+            bottom: "30px",
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 1000,
+            background: msg.type === "success" ? "#ffffff" : "#fef2f2",
+            borderLeft: `6px solid ${msg.type === "success" ? "#10b981" : "#ef4444"}`,
+            borderRadius: "12px",
+            padding: "16px 24px",
+            boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)",
+            display: "flex",
+            alignItems: "center",
+            gap: "15px",
+            minWidth: "350px",
+            maxWidth: "90%",
+            animation: "slideUp 0.3s cubic-bezier(0.4, 0, 0.2, 1)"
           }}>
-            {msg.type === "success" ? <CheckCircle size={24} color="#059669" /> : <AlertCircle size={24} color="#b91c1c" />}
+            <div style={{ 
+              background: msg.type === "success" ? "#ecfdf5" : "#fee2e2", 
+              padding: "8px", 
+              borderRadius: "50%",
+              display: "flex", alignItems: "center", justifyContent: "center"
+            }}>
+              {msg.type === "success" ? <CheckCircle size={24} color="#059669" /> : <AlertCircle size={24} color="#b91c1c" />}
+            </div>
+            <div style={{ flex: 1 }}>
+              <h4 style={{ margin: "0 0 4px 0", color: msg.type === "success" ? "#065f46" : "#991b1b", fontSize: "1rem" }}>
+                {msg.type === "success" ? "Upload Successful" : "Upload Failed"}
+              </h4>
+              <p style={{ margin: 0, color: msg.type === "success" ? "#047857" : "#b91c1c", fontSize: "0.9rem" }}>
+                {msg.text}
+              </p>
+            </div>
+            <button 
+              onClick={() => setMsg(null)}
+              style={{ background: "none", border: "none", cursor: "pointer", color: "#9ca3af", padding: "4px" }}
+            >
+              <X size={18} />
+            </button>
           </div>
-          <div style={{ flex: 1 }}>
-            <h4 style={{ margin: "0 0 4px 0", color: msg.type === "success" ? "#065f46" : "#991b1b", fontSize: "1rem" }}>
-              {msg.type === "success" ? "Upload Successful" : "Upload Failed"}
-            </h4>
-            <p style={{ margin: 0, color: msg.type === "success" ? "#047857" : "#b91c1c", fontSize: "0.9rem" }}>
-              {msg.text}
-            </p>
-          </div>
-          <button 
-            onClick={() => setMsg(null)}
-            style={{ background: "none", border: "none", cursor: "pointer", color: "#9ca3af", padding: "4px" }}
-          >
-            <X size={18} />
-          </button>
-        </div>
-      )}
+        )}
 
+      </div>
       <style>{`
         @keyframes slideUp {
           from { opacity: 0; transform: translate(-50%, 20px); }

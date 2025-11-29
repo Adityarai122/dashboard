@@ -1,8 +1,8 @@
 import Order from "../models/Order.js";
 import PendingOrder from "../models/PendingOrder.js";
-import DispatchSummary from "../models/DispatchSummary.js"; // Import New Model
+import DispatchSummary from "../models/DispatchSummary.js"; 
 
-// ... (keep buildQuery helper) ...
+// ... (keep buildQuery helper unchanged) ...
 const buildQuery = (q, filters) => {
   let query = {};
   
@@ -105,10 +105,11 @@ export const getDashboardStats = async (req, res) => {
       { $limit: 5 }
     ]);
 
-    // F. NEW: Recent Dispatch Upload Logs (The new feature you asked for)
+    // F. UPDATED: Recent Dispatch Upload Logs
+    // Increased limit to 20 to show more history
     const recentUploadLogs = await DispatchSummary.find()
       .sort({ uploadDate: -1 })
-      .limit(5);
+      .limit(20); 
 
     // G. Dynamic Dispatch Trend
     let limit = 30;
@@ -137,8 +138,7 @@ export const getDashboardStats = async (req, res) => {
       topDispatchedByQty: topDispatchedByQty.map(c => ({ name: c._id || "Unknown", qty: c.totalQty })),
       topPendingByQty: topPendingByQty.map(c => ({ name: c._id || "Unknown", qty: c.totalQty })),
       
-      // Send the summary logs to frontend
-      recentUploadLogs: recentUploadLogs,
+      recentUploadLogs: recentUploadLogs, // Now returns up to 20
 
       trend: dailyTrend.map(t => ({ name: t._id || "N/A", orders: t.orders, value: t.value })),
       rangeUsed: range || '1M'
@@ -150,7 +150,6 @@ export const getDashboardStats = async (req, res) => {
   }
 };
 
-// ... (Keep existing searchOrders, getAllOrders, getPendingOrders exports unchanged) ...
 export const searchOrders = async (req, res) => {
   try {
     const { q, startDate, endDate, customer, poNumber } = req.query;

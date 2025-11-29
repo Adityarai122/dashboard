@@ -4,17 +4,17 @@ import multer from "multer";
 import { uploadFile } from "../controllers/uploadController.js";
 
 const router = express.Router();
-// Allow up to 5 files at once
+// Allow up to 10 files at once
 const upload = multer({ dest: "uploads/" });
 
 // Upload for Pending Orders
-// Uses upload.array('file', 5) to accept multiple files
-router.post("/pending", upload.array("file", 5), (req, res) =>
+// Uses upload.array('file', 10) to accept multiple files
+router.post("/pending", upload.array("file", 10), (req, res) =>
   uploadFile(req, res, "PENDING")
 );
 
 // Upload for Dispatched Orders
-router.post("/dispatched", upload.array("file", 5), (req, res) =>
+router.post("/dispatched", upload.array("file", 10), (req, res) =>
   uploadFile(req, res, "DISPATCHED")
 );
 
